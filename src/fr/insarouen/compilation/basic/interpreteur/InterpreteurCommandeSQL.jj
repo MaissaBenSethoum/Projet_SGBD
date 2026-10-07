@@ -1,0 +1,445 @@
+ /** 
+ *  Interpreteur SQL simplifié réalisé avec JavaCC.
+ *  Ce parseur permet de reconnaître des commandes SQL de base :
+ *    - CREATE TABLE
+ *    - DROP TABLE
+ *    - INSERT INTO
+ *    - SELECT
+ *    - DELETE
+ *    - TABLES
+ *    - EXIT / QUIT
+ */
+
+options {
+  LOOKAHEAD = 1;
+  CHOICE_AMBIGUITY_CHECK = 1;
+  OTHER_AMBIGUITY_CHECK = 1;
+  STATIC = false;
+  DEBUG_PARSER = false;
+  DEBUG_LOOKAHEAD = false;
+  DEBUG_TOKEN_MANAGER = false;
+  ERROR_REPORTING = true;
+  JAVA_UNICODE_ESCAPE = false;
+  UNICODE_INPUT = false;
+  IGNORE_CASE = true;
+  USER_TOKEN_MANAGER = false;
+  USER_CHAR_STREAM = false;
+  BUILD_PARSER = true;
+  BUILD_TOKEN_MANAGER = true;
+  SANITY_CHECK = true;
+  FORCE_LA_CHECK = true;
+}
+
+PARSER_BEGIN(InterpreteurCommandeSQL)
+
+package fr.insarouen.compilation.basic.interpreteur;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Set;
+import java.util.LinkedHashSet;
+import fr.insarouen.compilation.basic.sgbd.SGBD;
+import fr.insarouen.compilation.basic.sgbd.ressources.Attribut;
+import fr.insarouen.compilation.basic.sgbd.ressources.TypeSQL;
+import fr.insarouen.compilation.basic.sgbd.ressources.Valeur;
+import fr.insarouen.compilation.basic.sgbd.ressources.IntValeur;
+import fr.insarouen.compilation.basic.sgbd.ressources.VarcharValeur;
+import fr.insarouen.compilation.basic.sgbd.conditions.Condition;
+import fr.insarouen.compilation.basic.sgbd.conditions.composee.ConditionEt;
+import fr.insarouen.compilation.basic.sgbd.conditions.composee.ConditionOu;
+import fr.insarouen.compilation.basic.sgbd.conditions.simple.ConditionComparaison;
+import fr.insarouen.compilation.basic.sgbd.TableSource;
+import java.io.IOException;
+
+
+
+/**
+ * Classe principale de l'interpreteur.
+ * Générée et utilisée par JavaCC.
+ * 
+ */
+
+public class InterpreteurCommandeSQL {
+
+  private SGBD sgbd;
+
+  public InterpreteurCommandeSQL(SGBD sgbd, java.io.InputStream stream){
+    this(stream);
+    this.sgbd = sgbd;
+  }
+}
+
+PARSER_END(InterpreteurCommandeSQL)
+
+/* 
+ * Gestion des espaces et retours à la ligne
+ * 
+*/
+
+SKIP : {
+  " " 
+  | "\t" 
+  | "\r"
+  | "\n"
+}
+
+/* 
+ * Gestion des commentaires SQL
+ * Les commentaires commencent par --
+ * 
+ */
+
+SKIP :
+{
+  < "--" (~["\n","\r"])* ("\n"|"\r"|"\r\n") >
+}
+
+/* 
+ * Déclaration des tokens SQL
+ * 
+ */
+TOKEN:{ 
+    <CREATE:"CREATE">
+    |<TABLE:"TABLE">
+    |<DROP:"DROP">
+    |<INSERT:"INSERT">
+    |<INTO:"INTO">
+    |<VALUES:"VALUES">
+    |<SELECT:"SELECT">
+    |<FROM:"FROM">
+    |<WHERE:"WHERE">
+    |<AND:"AND">
+    |<OR:"OR">
+    |<AS:"AS">
+    |<TABLES:"TABLES">
+    |<EXIT:"EXIT">
+    |<QUIT:"QUIT">
+    |<DELETE:"DELETE">
+    |<EG:"=">
+    |<SUP:">">
+    |<INF:"<">
+    |<PARENG:"(">
+    |<PAREND:")">
+    |<VIRG:"," >
+    |<POINT_VIRG: ";" >
+    |<ETOILE:"*">
+    |<INT:"INT">
+    |<SERIAL:"SERIAL">
+    |<VARCHAR:"VARCHAR">
+    |<ID:["A"-"Z","a"-"z"](["A"-"Z","a"-"z","0"-"9","_","."])*>
+    |<NUMBER: (["0"-"9"])+>
+    |<STRING: "\"" (~["\""])* "\"">
+}
+
+
+/*
+ * Point d'entrée principal des commandes SQL
+ * 
+ */
+void commande() throws IOException:
+{}
+{
+  ( 
+    commandeCreate()
+    | commandeInsert()
+    | commandeSelect()
+    | commandeDrop()
+    | commandeDelete()
+    | commandeTables()
+    | commandeExit()
+  )
+  <POINT_VIRG>
+}
+
+/* 
+ * CREATE TABLE
+ * Exemple :
+ *   CREATE TABLE personne(id INT, nom VARCHAR);
+ * 
+ */
+void commandeCreate():
+{
+  Token nomTable;
+  Set<Attribut> listeAttributs = new LinkedHashSet<Attribut>();
+  Attribut attr;
+}
+{
+  <CREATE> <TABLE> nomTable = <ID> 
+  <PARENG> 
+  attr = colonne() { listeAttributs.add(attr);} 
+  ( 
+    <VIRG> attr = colonne() { listeAttributs.add(attr); }
+  )*  <PAREND> 
+  {
+    sgbd.creerTable(nomTable.image, listeAttributs);
+    System.out.println("> Table "+nomTable.image+" créée.");
+  }
+}
+
+/* 
+ * Définition d'une colonne
+ * 
+ */
+Attribut colonne() :
+{
+  Token t;
+  TypeSQL ts;
+}
+{
+  t = <ID> ts = type()
+  {
+    return new Attribut(t.image, ts);
+  }
+}
+
+/* 
+ * Types de données autorisés
+ * 
+ */
+TypeSQL type() :
+{}
+{
+  <INT> { return TypeSQL.INT; }
+  | <SERIAL>  { return TypeSQL.SERIAL; }
+  | <VARCHAR> { return TypeSQL.VARCHAR; }
+}
+
+/* 
+ * DROP TABLE
+ * Exemple :
+ *   DROP TABLE personne;
+ */
+void commandeDrop() :
+{
+  Token nomTable;
+}
+{
+  <DROP> <TABLE> nomTable = <ID>
+  {
+    sgbd.supprimerTable(nomTable.image);
+    System.out.println("> Suppression de la table "+ nomTable.image);
+  }
+}
+
+/* 
+ * INSERT INTO
+ * Exemple :
+ *   INSERT INTO personne (id, nom) VALUES (1, "Alice");
+ */
+void commandeInsert() :
+{
+  Token nomTable;
+  Token nomCol;
+  Set<String> colonnes = new LinkedHashSet<String>();
+  List<Valeur> valeurs = new ArrayList<Valeur>();
+  Valeur val;
+}
+{
+  <INSERT> <INTO> nomTable = <ID> 
+  <PARENG> 
+  nomCol = <ID> { colonnes.add(nomCol.image); }
+  ( <VIRG> nomCol = <ID> { colonnes.add(nomCol.image); })* 
+  <PAREND> 
+
+  <VALUES> 
+  
+  <PARENG> val = valeur() { valeurs.add(val); } 
+  ( <VIRG> val = valeur() {valeurs.add(val); })*  <PAREND>
+
+  {
+    sgbd.insertInto(nomTable.image, valeurs);
+    System.out.println("> 1 ligne insérée dans " + nomTable.image);
+  }
+}
+
+/* 
+ * DELETE
+ * Exemple :
+ *   DELETE FROM personne WHERE id = 1;
+ */
+void commandeDelete() :
+{
+  Token nomTable;
+  Condition cond = null;
+}
+{
+  <DELETE> <FROM> nomTable = <ID>
+  (
+    <WHERE> cond = expressionLogique() 
+  )?
+  {
+    sgbd.delete(nomTable.image, cond);
+    System.out.println("Suppression effectuée dans la table " + nomTable.image);
+  }
+}
+
+/* 
+ * SELECT
+ * Exemples :
+ *   SELECT * FROM personne;
+ *   SELECT id, nom FROM personne;
+ *   SELECT id, nom FROM personne WHERE id > 1 AND nom = "Alice";
+ */
+void commandeSelect() :
+{
+  Set<String> colonnes = new LinkedHashSet<String>();
+  Set<TableSource> sources = new LinkedHashSet<TableSource>();
+  Condition cond = null;
+  Token t;
+  TableSource s;
+}
+{
+  <SELECT>
+  (
+    <ETOILE> { colonnes.add("*");}
+    |
+    t = <ID> { colonnes.add(t.image);}
+    ( <VIRG> t = <ID> {colonnes.add(t.image);} )*
+  )
+
+  <FROM>
+  s = source() { sources.add(s); }
+  ( <VIRG> s = source() { sources.add(s); } )*
+
+  [
+    <WHERE>
+    cond = expressionLogique()
+  ]
+
+  {
+    sgbd.select(colonnes, sources, cond);
+  }
+}
+
+/* 
+ * Source SQL avec alias optionnel
+ * Exemple :
+ *   personne p
+ *   personne AS p
+ * 
+ */
+TableSource source() :
+{
+  Token nom;
+  Token alias = null;
+}
+{
+  nom = <ID>
+  [
+    [ <AS> ]
+    alias = <ID>
+  ]
+  { 
+    return new TableSource(nom.image, (alias == null)? nom.image: alias.image);
+  }
+}
+
+/* 
+ * Affichage des tables
+ * 
+ */
+void commandeTables() :
+{}
+{
+  <TABLES>
+  {
+    sgbd.afficherTables();
+  }
+}
+
+/* 
+ * Commande de sortie
+ * 
+ */
+void commandeExit() throws IOException :
+{}
+{
+  ( <EXIT> | <QUIT> )
+  {
+    System.out.println("Sauvegarde des données en cours.");
+    sgbd.sauvegarder();
+    System.out.println("Au revoir !");
+    System.exit(0);
+  }
+}
+
+/* 
+ * 
+ * Analyse une expression logique composée de conditions
+ * reliées par les opérateurs AND ou OR.
+ *
+ * @return un objet Condition représentant l’arbre logique.
+ */
+Condition expressionLogique() :
+{
+  Condition c1;
+  Condition c2;
+}
+{
+  c1 = conditionSimple()
+  (
+    <AND> c2 = conditionSimple() { c1 = new ConditionEt(c1, c2); }
+    |
+    <OR> c2 = conditionSimple() { c1 = new ConditionOu(c1,c2); }
+  )*
+  {return c1;}
+}
+
+/* 
+ *
+ * Analyse une condition simple composée :
+ *   - d’un identifiant (colonne),
+ *   - d’un opérateur de comparaison,
+ *   - d’une valeur ou d’un autre identifiant.
+
+ *
+ * @return un objet ConditionComparaison.
+ */
+Condition conditionSimple() :
+{
+  Token col;
+  Token col2;
+  Token op;
+  Valeur val;
+}
+{
+  col = <ID>
+  (
+    op = <EG> | op = <SUP> | op = <INF>
+  )
+  (
+    val = valeur(){
+      return new ConditionComparaison(col.image, op.image, val);
+    }
+    |
+    col2 = <ID>{
+      return new ConditionComparaison(col.image, op.image, col2.image);
+    }
+  )
+
+}
+
+/* 
+ * Analyse les différentes valeurs possibles :
+ *  - entier (NUMBER)
+ *  - chaîne de caractères (STRING)
+ *
+ *
+ * @return un objet Valeur correspondant au type détecté.
+ */
+Valeur valeur() :
+{
+  Token t;
+}
+{
+  t = <NUMBER> { return new IntValeur(Integer.parseInt(t.image));}
+  |
+  t = <STRING> {
+    String contenu = t.image.substring(1,t.image.length() -1); /** Permet de retirer les guillemets */
+    return new VarcharValeur(contenu);
+  }
+}
+
+
+
